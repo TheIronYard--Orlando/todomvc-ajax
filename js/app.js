@@ -9,6 +9,56 @@ jQuery(function ($) {
 	var ENTER_KEY = 13;
 	var ESCAPE_KEY = 27;
 
+  var ajax = {
+    baseUrl: 'http://localhost:3000/todos',
+    headers: {
+      'Authorization': 'Token token=supadupasecret'
+    },
+    getJSON: function (callback) {
+      $.getJSON({
+        url: this.baseUrl,
+        headers: this.headers,
+        success: function (response) {
+          callback(response.data)
+        }
+      })
+    },
+    create: function (value, callback) {
+      $.post({
+        url: this.baseUrl,
+        headers: this.headers,
+        data: { todo: { todo: value } },
+        success: function (response) {
+          callback(response.data)
+        }
+      })
+    },
+    destroy: function (todo) {
+      if(todo.id.includes('-'))
+        return;
+      $.ajax({
+        type: "DELETE",
+        url: `${this.baseUrl}/${todo.id}`,
+        headers: this.headers
+      });
+    },
+    update: function (todo) {
+      if(todo.id.includes('-'))
+        return;
+      $.ajax({
+        type: "PUT",
+        url: `${this.baseUrl}/${todo.id}`,
+        headers: this.headers,
+        data: {
+          todo: {
+            todo: todo.title,
+            isComplete: todo.completed
+          }
+        }
+      });
+    }
+  };
+
 	var util = {
 		uuid: function () {
 			/*jshint bitwise:false */
@@ -44,6 +94,7 @@ jQuery(function ($) {
 			this.todoTemplate = Handlebars.compile($('#todo-template').html());
 			this.footerTemplate = Handlebars.compile($('#footer-template').html());
 			this.bindEvents();
+      ajax.getJSON(this.integrateList.bind(this));
 
 			var router = new Router({
         '/:filter': (filter) => this.renderFiltered(filter)
@@ -89,7 +140,10 @@ jQuery(function ($) {
 		toggleAll: function (e) {
 			var isChecked = $(e.target).prop('checked');
 
-      this.todos.forEach(todo => todo.completed = isChecked);
+      this.todos.forEach(todo => {
+        todo.completed = isChecked;
+        ajax.update(todo);
+      });
 
 			this.render();
 		},
@@ -111,6 +165,7 @@ jQuery(function ($) {
 			return this.todos;
 		},
 		destroyCompleted: function () {
+      this.getCompletedTodos().forEach(todo => ajax.destroy(todo));
 			this.todos = this.getActiveTodos();
 			this.filter = 'all';
 			this.render();
@@ -118,7 +173,7 @@ jQuery(function ($) {
 		// accepts an element from inside the `.item` div and
 		// returns the corresponding index in the `todos` array
 		indexFromEl: function (el) {
-			var id = $(el).closest('li').data('id');
+			var id = String($(el).closest('li').data('id'));
 			var todos = this.todos;
 			var i = todos.length;
 
@@ -136,19 +191,26 @@ jQuery(function ($) {
 				return;
 			}
 
-			this.todos.push({
-				id: util.uuid(),
-				title: val,
-				completed: false
-			});
+      var uuid = util.uuid();
+			this.integrate(uuid, val);
+      ajax.create(val, this.replace(uuid, this));
 
 			$input.val('');
 
 			this.render();
 		},
+    replace: (oldId, context) => {
+      return (newTodo) => {
+        var todo = context.todos.find((todo) => todo.id === oldId);
+        todo.id = newTodo.id;
+        util.store('todos-jquery', context.todos);
+      }
+    },
 		toggle: function (e) {
 			var i = this.indexFromEl(e.target);
-			this.todos[i].completed = !this.todos[i].completed;
+      var todo = this.todos[i];
+			todo.completed = !todo.completed;
+      ajax.update(todo);
 			this.render();
 		},
 		edit: function (e) {
@@ -177,15 +239,35 @@ jQuery(function ($) {
 			if ($el.data('abort')) {
 				$el.data('abort', false);
 			} else {
-				this.todos[this.indexFromEl(el)].title = val;
+        var todo = this.todos[this.indexFromEl(el)];
+				todo.title = val;
+        ajax.update(todo);
 			}
 
 			this.render();
 		},
 		destroy: function (e) {
-			this.todos.splice(this.indexFromEl(e.target), 1);
+			var todo = this.todos.splice(this.indexFromEl(e.target), 1)[0];
+      ajax.destroy(todo);
 			this.render();
-		}
+    },
+    notIntegrated: function (todo) {
+      return !this.todos.map((todo) => todo.id).includes(todo.id);
+    },
+    integrate: function (id, title, completed) {
+      this.todos.push({
+        id: id,
+        title: title,
+        completed: completed || false
+      });
+    },
+    integrateList: function (data) {
+      data.filter((todo) => this.notIntegrated(todo))
+          .forEach(todo => this.integrate(todo.id,
+                                          todo.attributes.id,
+                                          todo.attributes['is-complete']));
+      this.render();
+    }
 	};
 
 	App.init();
